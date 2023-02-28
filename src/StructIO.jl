@@ -114,8 +114,10 @@ Generates `packing_strategy()` and `packed_sizeof()` methods for the type being
 defined within the given type definition.  This enables usage of the `unpack`
 method.
 
-If the annotation after the `end` is not specified it defaults to `Default` packing strategy,
- alternatively a `Packed` packing strategy can be selected by specifying 'align_packed`
+If no alignment specification is provided after `end`, the `Default` packing
+strategy is used. This can be also be made explicit by specifying `align_default`.
+Alternatively, the `Packed` packing strategy can be selected by specifying
+`align_packed`.
 """
 macro io(typ, annotations...)
     alignment = :align_default
