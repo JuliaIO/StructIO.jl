@@ -1,5 +1,6 @@
 using StructIO
-using Test, REPL
+using Test
+import REPL # needed for docstring-string conversion
 
 # First, exercise the `@io` macro a bit, to ensure it can handle different
 # kinds of type declarations
