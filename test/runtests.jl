@@ -1,5 +1,6 @@
 using StructIO
 using Test
+import REPL # needed for docstrings on nightly: julia#55438
 
 # First, exercise the `@io` macro a bit, to ensure it can handle different
 # kinds of type declarations
