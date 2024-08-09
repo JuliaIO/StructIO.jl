@@ -164,5 +164,5 @@ end
 end
 
 @testset "Documentation" begin
-    @test String(@doc ParametricType) == "This is a docstring\n"
+    @test string(@doc ParametricType) == "This is a docstring\n"
 end
