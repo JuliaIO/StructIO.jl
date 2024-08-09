@@ -1,5 +1,5 @@
 using StructIO
-using Test
+using Test, REPL
 
 # First, exercise the `@io` macro a bit, to ensure it can handle different
 # kinds of type declarations
