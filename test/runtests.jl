@@ -32,6 +32,33 @@ end
     y::T
 end align_packed
 
+# Structs with gaps
+@io struct RawData
+    A::UInt32
+    dummy_1::UInt8
+    dummy_2::UInt16
+    B::UInt16
+    dummy_3::UInt32
+    C::UInt128
+    dummy_4::UInt16
+    dummy_5::UInt64
+    D::UInt8
+    dummy_6::UInt8
+end align_packed
+
+@io struct GappedStruct
+    A::UInt32
+    _::3
+    B::UInt16
+    _::4
+    C::UInt128
+    _::2
+    _::8
+    _D::UInt8
+    _::1
+end align_packed
+
+
 # Also test documenting a type
 """
 This is a docstring
@@ -166,4 +193,31 @@ end
 
 @testset "Documentation" begin
     @test string(@doc ParametricType) == "This is a docstring\n"
+end
+
+@testset "Struct with gaps" begin
+    A,B,C,D = 1,2,3,4
+    gapped_struct =  GappedStruct(A, B, C, D)
+    raw_data = RawData(A, 0xBE, 0xBEEF, B, 0xDEADBEEF, C, 0xBEEF, 0xDEADBEEFDEADBEEF,
+                       D, 0xBE);
+    unpacked_raw_data = RawData(A, 0, 0, B, 0, C, 0, 0, D, 0);
+    #
+    @test all(StructIO.field_gaps(GappedStruct) .== [0, 3, 4, 10, 1])
+    @test packed_sizeof(RawData) == packed_sizeof(GappedStruct)
+	for endian in [:LittleEndian, :BigEndian]
+        buf = IOBuffer()
+        pack(buf, raw_data, endian)
+        seekstart(buf)
+        @test unpack(buf, GappedStruct, endian) == gapped_struct
+        @test eof(buf)
+        #
+        buf = IOBuffer(zeros(UInt8, packed_sizeof(GappedStruct)), read=true, write=true)
+        pack(buf, gapped_struct, endian)
+        @test eof(buf)
+        seekstart(buf)
+        @test unpack(buf, GappedStruct, endian) == gapped_struct
+        @test eof(buf)
+        seekstart(buf)
+        @test unpack(buf, RawData, endian) == unpacked_raw_data
+    end
 end

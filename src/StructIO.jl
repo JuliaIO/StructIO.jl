@@ -70,7 +70,7 @@ end
 
 @pure function packed_sizeof(T::DataType, ::Type{Packed})
     @assert fieldcount(T) != 0 && isbitstype(T)
-    return sum(packed_sizeof, T.types)
+    return sum(packed_sizeof, T.types) + sum(field_gaps(T))
 end
 
 @pure function packed_sizeof(T::DataType)
@@ -102,7 +102,6 @@ Return the size (in bytes) of a field within `T` in memory
         return fieldoffset(T, field_idx + 1) - offset
     end
 end
-
 
 """
     @io <type definition>
@@ -136,11 +135,20 @@ macro io(typ, annotations...)
         T = T.args[1]
     end
 
+    if alignment == :align_packed
+        gap_values =  strip_gap_nodes!(typ)
+    end
+    
     ret = Expr(:toplevel, :(Base.@__doc__ $(typ)))
     strat = (alignment == :align_default ? StructIO.Default : StructIO.Packed)
     push!(ret.args, :($StructIO.packing_strategy(::Type{T}) where {T <: $T} = $strat))
+    if strat == Packed
+         push!(ret.args, :($StructIO.field_gaps(::Type{T})  where {T <: $T} = $gap_values))
+    end
+    
     return esc(ret)
 end
+field_gaps(::Type{T}) where T = UInt[]
 
 """
     unsafe_unpack(io, T, target, endianness, ::Type{Default})
@@ -242,7 +250,7 @@ function unsafe_pack(io, source::Ref{T}, endianness, ::Type{Default}) where {T}
 end
 
 # `Packed` packing strategy override for `unsafe_unpack`
-function unsafe_unpack(io, T, target, endianness, ::Type{Packed})
+function unsafe_unpack(io, T, target, endianness, ::Type{Packed}; gaps=field_gaps(T))
     # If this type cannot be subdivided, packing strategy means nothing, so
     # hand it off to the `Default` packing strategy method
     if fieldcount(T) == 0
@@ -255,12 +263,16 @@ function unsafe_unpack(io, T, target, endianness, ::Type{Packed})
         # Unpack this field into `target` at the appropriate offset
         fT = fieldtype(T, i)
         target_i = target_ptr + fieldoffset(T, i)
+        isempty(gaps) || skip(io, gaps[i])
         unsafe_unpack(io, fT, target_i, endianness, Packed)
     end
+    isempty(gaps) || skip(io, gaps[fieldcount(T) + 1])
 end
 
 # `Packed` packing strategy override for `unsafe_pack`
-function unsafe_pack(io, source::Ref{T}, endianness, ::Type{Packed}) where {T}
+function unsafe_pack(
+    io, source::Ref{T}, endianness, ::Type{Packed}; gaps=field_gaps(T)
+    ) where {T}
     # If this type cannot be subdivided, packing strategy means nothing, so
     # hand it off to the `Default` packing strategy method
     if fieldcount(T) == 0
@@ -272,8 +284,10 @@ function unsafe_pack(io, source::Ref{T}, endianness, ::Type{Packed}) where {T}
         # Unpack this field into `target` at the appropriate offset
         fT = fieldtype(T, i)
         f = Ref{fT}(getfield(source[], fieldname(T, i)))
+        isempty(gaps) || skip(io, gaps[i])
         unsafe_pack(io, f, endianness, Packed)
     end
+    isempty(gaps) || skip(io, gaps[fieldcount(T) + 1])
 end
 
 """
@@ -310,5 +324,50 @@ function pack(io::IO, source::T, endianness::Symbol = :NativeEndian) where {T}
     unsafe_pack(io, r, endianness, packstrat)
     return nothing
 end
+
+function strip_gap_nodes!(strct_expr::Expr)
+    @assert strct_expr.head == :struct
+    strct_nodes = strct_expr.args[3].args
+    K = length(strct_nodes)
+    gap_locations = UInt[]
+    # accumulator, in case several gap specifications occur in unbroken succession
+    gap_value = zero(UInt)
+    # gaps before structure fields
+    field_gap_values = UInt[]
+    for k in 1:K
+        f = strct_nodes[k]
+        if Meta.isexpr(f, :(::))
+            # collect positions of gap nodes, when encountering a structure
+            # field, store the accumulated gap and reset the accumulator
+            if f.args[1] === :_ 
+                if isa(f.args[2], Integer) && f.args[2] >= 0
+                    push!(gap_locations, k)
+                    gap_value += UInt(f.args[2])
+                else
+                    error("incorrect gap specification: $f")
+                end
+            elseif isa(f.args[1], Symbol)
+                
+                push!(field_gap_values, gap_value)
+                gap_value = zero(UInt)
+            else
+                error("unsupported structure field specification: $f")
+            end
+        end
+    end
+    # do not neglect the gap after the last field
+    push!(field_gap_values, gap_value)
+    if all(iszero, field_gap_values)
+        field_gap_values = UInt[]
+    end
+    # remove gap specifications from the expression tree
+    for k in length(gap_locations):-1:1
+        deleteat!(strct_nodes, gap_locations[k])
+    end
+    strct_expr.args[3].args = strct_nodes
+
+    return field_gap_values
+end
+
 
 end # module
